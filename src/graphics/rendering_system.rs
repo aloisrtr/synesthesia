@@ -1,9 +1,6 @@
-use std::cell::RefCell;
 use std::mem;
-use std::net::Shutdown::Write;
-use std::process::Output;
 use std::sync::Arc;
-use glm::{identity, look_at, perspective, TMat4, translate, vec3};
+use glm::{identity, look_at, ortho, perspective, TMat4, translate, vec3};
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, PrimaryCommandBuffer, SubpassContents};
 use vulkano::device::{physical::PhysicalDevice, DeviceExtensions, DeviceCreateInfo, QueueCreateInfo, Queue, Device, DeviceOwned};
@@ -14,7 +11,7 @@ use vulkano::format::Format;
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::swapchain::{AcquireError, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainCreationError};
+use vulkano::swapchain::{AcquireError, FullScreenExclusive, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainCreationError};
 use vulkano::{swapchain, sync};
 use vulkano::buffer::cpu_pool::CpuBufferPoolSubbuffer;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
@@ -24,12 +21,13 @@ use vulkano::pipeline::graphics::vertex_input::{BuffersDefinition, Vertex, Verte
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState};
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
-use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
+use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, RasterizationState};
 use vulkano::sync::{FlushError, GpuFuture};
 use vulkano_win::VkSurfaceBuild;
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
-use crate::{AmbientLight, DirectionalLight};
+use winit::window::Fullscreen::Borderless;
+use super::{AmbientLight, DirectionalLight};
 use crate::graphics::{Vertex2D, VP};
 
 #[derive(Debug)]
@@ -98,6 +96,16 @@ impl RenderingSystem {
             ..DeviceExtensions::none()
         };
 
+        let minimal_features = vulkano::device::Features {
+            fill_mode_non_solid: true,
+            .. Default::default()
+        };
+
+        let optimal_features = vulkano::device::Features {
+            fill_mode_non_solid: true,
+            .. Default::default()
+        };
+
         let (physical_device, queue_family) = PhysicalDevice::enumerate(&instance)
             .filter(|&p| p.supported_extensions().is_superset_of(&device_extensions))
             .filter_map(|p| {
@@ -113,10 +121,14 @@ impl RenderingSystem {
                 PhysicalDeviceType::Other => 4,
             }).unwrap();
 
+        let requested_extensions = physical_device.required_extensions().union(&device_extensions);
+        let requested_features = optimal_features.intersection(physical_device.supported_features());
+
         let (device, mut queues) = Device::new(
             physical_device,
             DeviceCreateInfo {
-                enabled_extensions: physical_device.required_extensions().union(&device_extensions),
+                enabled_extensions: requested_extensions,
+                enabled_features: requested_features,
                 queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
                 ..Default::default()
             }
@@ -127,7 +139,8 @@ impl RenderingSystem {
         let (swapchain, images) = {
             let capabilities = physical_device.surface_capabilities(&surface, Default::default()).unwrap();
             let dimensions: [u32; 2] = surface.window().inner_size().into();
-            vp.projection = perspective(dimensions[0] as f32 / dimensions[1] as f32, 180.0, 0.01, 100.0);
+            vp.projection = perspective(dimensions[0] as f32 / dimensions[1] as f32, 45.0, 0.01, 100.0);
+            vp.view = look_at(&vec3(0.0, 0.0, 0.01), &vec3(0.0, 0.0, 0.0), &vec3(0.0, -1.0, 0.0));
 
             Swapchain::new(
                 device.clone(),
@@ -214,7 +227,11 @@ impl RenderingSystem {
             .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
             .fragment_shader(deferred_fragment.entry_point("main").unwrap(), ())
             .depth_stencil_state(DepthStencilState::simple_depth_test())
-            .rasterization_state(RasterizationState::new().cull_mode(CullMode::Back))
+            .rasterization_state(
+                RasterizationState::new()
+                    .cull_mode(CullMode::Back)
+                    /*.polygon_mode(PolygonMode::Line)*/
+            )
             .render_pass(deferred_pass.clone())
             .build(device.clone())
             .unwrap();
@@ -324,7 +341,9 @@ impl RenderingSystem {
                 self.recreate_swapchain();
                 self.state = RenderingState::Stopped;
                 self.commands = None;
-                return Err(RenderingError::NonConformingState(format!("Could not start rendering, system needed redrawing")))
+                // We can just restart the rendering seamlessly here since we
+                // did not start anything anyway
+                return self.start_render()
             },
             _ => {
                 self.state = RenderingState::Stopped;
@@ -430,20 +449,20 @@ impl RenderingSystem {
         Ok(())
     }
 
-    pub fn calculate_ambient_light(&mut self, light: &AmbientLight) {
+    pub fn calculate_ambient_light(&mut self, light: &AmbientLight) -> Result<(), RenderingError> {
         match self.state {
             RenderingState::Deferred => self.state = RenderingState::Ambient,
-            RenderingState::Ambient => return,
+            RenderingState::Ambient => return Ok(()),
             RenderingState::WaitingRedraw => {
                 self.recreate_swapchain();
                 self.state = RenderingState::Stopped;
                 self.commands = None;
-                return;
+                return Err(RenderingError::NonConformingState(String::new()));
             },
             _ => {
                 self.state = RenderingState::Stopped;
                 self.commands = None;
-                return;
+                return Err(RenderingError::NonConformingState(String::new()));
             }
         }
 
@@ -483,6 +502,8 @@ impl RenderingSystem {
             .unwrap();
 
         self.commands = Some(commands);
+
+        Ok(())
     }
 
     pub fn calculate_directional_light(&mut self, light: &DirectionalLight) -> Result<(), RenderingError> {
@@ -541,7 +562,6 @@ impl RenderingSystem {
                 self.recreate_swapchain();
                 self.commands = None;
                 self.state = RenderingState::Stopped;
-                return Err(RenderingError::NonConformingState(format!("Needed redraw")))
             }
             _ => {
                 self.commands = None;
@@ -641,7 +661,7 @@ impl RenderingSystem {
     }
 
     pub fn set_view(&mut self, view: &TMat4<f32>) {
-        self.vp.view = view.clone();
+        self.vp.view = *view;
         self.vp_buffer = CpuAccessibleBuffer::from_data(
             self.device.clone(),
             BufferUsage::all(),
@@ -658,7 +678,33 @@ impl RenderingSystem {
             [WriteDescriptorSet::buffer(0, self.vp_buffer.clone())]
         ).unwrap();
 
-        self.state = RenderingState::Stopped;
+        self.state = RenderingState::WaitingRedraw;
+    }
+
+    pub fn set_projection(&mut self, projection: &TMat4<f32>) {
+        self.vp.projection = *projection;
+        self.vp_buffer = CpuAccessibleBuffer::from_data(
+            self.device.clone(),
+            BufferUsage::all(),
+            false,
+            deferred_vertex::ty::VP {
+                view: self.vp.view.into(),
+                projection: self.vp.projection.into()
+            }
+        ).unwrap();
+
+        let vp_layout = self.deferred_pipeline.layout().set_layouts().get(0).unwrap();
+        self.vp_descriptor_set = PersistentDescriptorSet::new(
+            vp_layout.clone(),
+            [WriteDescriptorSet::buffer(0, self.vp_buffer.clone())]
+        ).unwrap();
+
+        self.state = RenderingState::WaitingRedraw;
+    }
+
+    pub fn set_orthogonal_projection(&mut self) {
+        let dimensions: [f32; 2] = self.surface.window().inner_size().into();
+        self.set_projection(&ortho(0.0, dimensions[0], 0.0, dimensions[1], 0.01, 100.0))
     }
 
     pub fn recreate_swapchain(&mut self) {
@@ -709,11 +755,23 @@ impl RenderingSystem {
         light: &DirectionalLight
     ) -> Arc<CpuBufferPoolSubbuffer<directional_fragment::ty::DirectionalLight, Arc<StdMemoryPool>>> {
         let uniform_data = directional_fragment::ty::DirectionalLight {
-            position: light.position.into(),
-            color: light.color.into(),
-            intensity: light.intensity.into(),
+            position: light.position,
+            color: light.color,
+            intensity: light.intensity,
         };
         buffer_pool.next(uniform_data).unwrap()
+    }
+
+    pub fn set_fullscreen(&mut self) {
+        if self.surface.window().fullscreen().is_some() {
+            self.surface.window().set_fullscreen(None);
+        } else {
+            self.surface.window().set_fullscreen(
+                Some(
+                    Borderless(self.surface.window().current_monitor())
+                )
+            );
+        }
     }
 }
 
