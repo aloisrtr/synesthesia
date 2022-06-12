@@ -1,7 +1,8 @@
 mod signal_processing;
 
 use std::sync::{Arc, Mutex};
-use cpal::{Device, Host, Stream};
+use std::time::{Duration, Instant};
+use cpal::{Device, Stream};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustfft::num_complex::Complex;
 use crate::audio::signal_processing::fft;
@@ -9,15 +10,19 @@ use crate::Sound;
 
 #[derive(Default, Clone)]
 pub struct RealtimeAttributes {
-    pub fft: Vec<Complex<f32>>
+    pub fft: Vec<Complex<f32>>,
+    pub timestamp: Duration
 }
 
-#[derive(Default)]
-pub struct GeneralAttributes {}
+#[derive(Default, Clone)]
+pub struct GeneralAttributes {
+    pub duration: Duration
+}
 
 pub struct AudioPlayer {
     device: Device,
     stream: Option<Stream>,
+    paused: bool,
 
     realtime_attributes: Arc<Mutex<RealtimeAttributes>>,
     general_attributes: GeneralAttributes
@@ -30,6 +35,7 @@ impl AudioPlayer {
         AudioPlayer {
             device,
             stream: None,
+            paused: true,
 
             realtime_attributes: Default::default(),
             general_attributes: Default::default(),
@@ -50,9 +56,12 @@ impl AudioPlayer {
         // tedious operations which should never be done
         // in real time
         // -------------
+        self.general_attributes = Default::default();
+        self.general_attributes.duration = sound.duration();
 
         self.realtime_attributes = Default::default();
         let inner_rta = self.realtime_attributes.clone();
+        let play_start = Instant::now();
         let stream = self.device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -66,6 +75,7 @@ impl AudioPlayer {
 
                 let mut rta = inner_rta.lock().unwrap();
                 (*rta).fft = fft(&data[..written]);
+                (*rta).timestamp = play_start.elapsed();
                 drop(rta)
             },
             move |e| eprintln!("audio output error: {:?}", e)
@@ -76,6 +86,7 @@ impl AudioPlayer {
         }
 
         self.resume();
+        self.paused = false;
     }
 
     pub fn get_realtime_attributes(&self) -> RealtimeAttributes {
@@ -83,16 +94,26 @@ impl AudioPlayer {
         (*rta).clone()
     }
 
+    pub fn get_general_attributes(&self) -> GeneralAttributes {
+        self.general_attributes.clone()
+    }
+
     pub fn resume(&mut self) {
         if let Some(s) = &self.stream {
-            s.play().unwrap()
+            s.play().unwrap();
+            self.paused = false;
         }
     }
 
     pub fn pause(&mut self) {
         if let Some(s) = &self.stream {
-            s.pause().unwrap()
+            s.pause().unwrap();
+            self.paused = true;
         }
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 }
 

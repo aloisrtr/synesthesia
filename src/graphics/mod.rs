@@ -2,7 +2,6 @@ pub mod rendering_system;
 pub use rendering_system::RenderingSystem;
 pub use winit::event_loop::EventLoop;
 use bytemuck::{Pod, Zeroable};
-use glm::identity;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]

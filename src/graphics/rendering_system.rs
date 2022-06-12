@@ -1,9 +1,9 @@
 use std::mem;
 use std::sync::Arc;
-use glm::{identity, look_at, ortho, perspective, TMat4, translate, vec3};
+use glm::{look_at, ortho, perspective, TMat4, vec3};
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, PrimaryCommandBuffer, SubpassContents};
-use vulkano::device::{physical::PhysicalDevice, DeviceExtensions, DeviceCreateInfo, QueueCreateInfo, Queue, Device, DeviceOwned};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SubpassContents};
+use vulkano::device::{physical::PhysicalDevice, DeviceExtensions, DeviceCreateInfo, QueueCreateInfo, Queue, Device};
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::image::{AttachmentImage, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::image::view::ImageView;
@@ -11,17 +11,17 @@ use vulkano::format::Format;
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::swapchain::{AcquireError, FullScreenExclusive, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainCreationError};
+use vulkano::swapchain::{AcquireError, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainCreationError};
 use vulkano::{swapchain, sync};
 use vulkano::buffer::cpu_pool::CpuBufferPoolSubbuffer;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::memory::pool::StdMemoryPool;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::vertex_input::{BuffersDefinition, Vertex, VertexBuffersCollection};
+use vulkano::pipeline::graphics::vertex_input::{BuffersDefinition, Vertex};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState};
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
-use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, RasterizationState};
+use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::sync::{FlushError, GpuFuture};
 use vulkano_win::VkSurfaceBuild;
 use winit::event_loop::EventLoop;
@@ -49,7 +49,6 @@ pub trait Render<T: Vertex> {
 }
 
 pub struct RenderingSystem {
-    instance: Arc<Instance>,
     surface: Arc<Surface<Window>>,
     device: Arc<Device>,
     queue: Arc<Queue>,
@@ -96,7 +95,7 @@ impl RenderingSystem {
             ..DeviceExtensions::none()
         };
 
-        let minimal_features = vulkano::device::Features {
+        let _minimal_features = vulkano::device::Features {
             fill_mode_non_solid: true,
             .. Default::default()
         };
@@ -301,7 +300,6 @@ impl RenderingSystem {
         let previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>);
 
         (RenderingSystem {
-            instance,
             surface,
             device,
             queue,

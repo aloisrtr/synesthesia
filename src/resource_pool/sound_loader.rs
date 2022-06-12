@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::path::Path;
+use std::time::Duration;
 use symphonia::core::audio::{SampleBuffer};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
@@ -17,7 +18,9 @@ impl ResourcePool<Sound> {
 pub struct Sound {
     samples: Vec<f32>,
     sample_rate: u32,
-    channels: usize
+    channels: usize,
+
+    duration: Duration
 }
 impl Sound {
     pub fn load(file_path: &str) -> Self {
@@ -50,17 +53,22 @@ impl Sound {
         let mut decoder =
             symphonia::default::get_codecs().make(&track.codec_params, &Default::default()).unwrap();
 
+        let timebase = track.codec_params.time_base.unwrap();
+        let duration_timestamp = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames).unwrap();
+        let duration_time = timebase.calc_time(duration_timestamp);
+        let duration = Duration::from_secs(duration_time.seconds) + Duration::from_secs_f64(duration_time.frac);
+
         let mut sound = Sound {
             samples: vec!(),
             sample_rate: track.codec_params.sample_rate.unwrap(),
-            channels: track.codec_params.channels.unwrap().count()
+            channels: track.codec_params.channels.unwrap().count(),
+
+            duration
         };
 
         // The sample buffer needs information that we get after decoding at least
         // one packet, so we instantiate it later
         let mut sample_buffer = None;
-
-        let mut samples_read = 0;
         while let Ok(packet) = format.next_packet() {
             // Skip the packet if it does not belong to our track
             if packet.track_id() != track.id { continue }
@@ -81,7 +89,6 @@ impl Sound {
                     let samples: Vec<f32> = buffer
                         .samples()
                         .to_vec();
-                    samples_read += samples.len();
                     sound.samples.extend_from_slice(&samples);
                 }
             }
@@ -93,4 +100,5 @@ impl Sound {
     pub fn samples(&self) -> Vec<f32> { self.samples.clone() }
     pub fn sample_rate(&self) -> u32 { self.sample_rate }
     pub fn channel_count(&self) -> usize { self.channels }
+    pub fn duration(&self) -> Duration { self.duration }
 }

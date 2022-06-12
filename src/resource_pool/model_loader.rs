@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-use std::sync::Arc;
-use glm::{identity, inverse_transpose, rotate_normalized_axis, scale, TMat4, translate, TVec3, vec3, Vec3};
+use glm::{identity, inverse_transpose, rotate_normalized_axis, scale, TMat4, translate, TVec3, vec3};
 use super::obj_loader::{ Loader, NormalVertex };
 use crate::resource_pool::ResourcePool;
 use crate::graphics::rendering_system::Render;
@@ -10,7 +8,7 @@ vulkano::impl_vertex!(NormalVertex, position, normal, color);
 
 impl ResourcePool<Model> {
     pub fn load(&mut self, resource_id: &str, file_path: &str) -> Result<(), String> {
-        let mut model = Model::new(file_path).build();
+        let model = Model::new(file_path).build();
         self.0.insert(String::from(resource_id), model);
         Ok(())
     }
@@ -138,6 +136,7 @@ impl Model {
     pub fn get_scale(&self) -> TVec3<f32> {
         vec3(self.scale.m11, self.scale.m22, self.scale.m33)
     }
+    pub fn get_position(&self) -> TVec3<f32> { vec3(self.translation.m14, self.translation.m24, self.translation.m34) }
 }
 impl Render<NormalVertex> for Model {
     fn vertices(&self) -> Vec<NormalVertex> {

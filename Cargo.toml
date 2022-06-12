@@ -13,6 +13,8 @@ vulkano-shaders = "0.29.0"
 bytemuck = "1.9.1"
 nalgebra-glm = "0.17.0"
 gltf = "1.0.0"
+lyon = "0.17.10"
+usvg = "0.23.0"
 
 cpal = "0.13.5"
 symphonia = { version = "0.5", features = [ "aac", "alac", "mp3", "isomp4" ] }

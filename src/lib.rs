@@ -3,11 +3,11 @@ extern crate nalgebra_glm as glm;
 use std::f32::consts::PI;
 use std::sync::Arc;
 use std::time::Instant;
-use glm::{scale, vec3};
+use glm::vec3;
 use vulkano::sync::GpuFuture;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use crate::audio::{AudioPlayer, RealtimeAttributes};
+use crate::audio::{AudioPlayer, GeneralAttributes, RealtimeAttributes};
 use crate::graphics::{AmbientLight, DirectionalLight, RenderingSystem};
 use crate::resource_pool::model_loader::Model;
 use crate::resource_pool::ResourcePool;
@@ -45,7 +45,7 @@ impl Synesthesia {
             audio_player: Default::default(),
 
             model_pool: Default::default(),
-            sound_pool: Default::default()
+            sound_pool: Default::default(),
         }
     }
 
@@ -55,16 +55,16 @@ impl Synesthesia {
 
         self.model_pool.load("cube", "assets/models/cube.obj");
         let cubes_count = 64;
-        let cubes: Vec<Model> = (0..=cubes_count).map(|i| {
+        let cubes: Vec<Model> = (0..cubes_count + 2).map(|_| {
             self.model_pool.get_copy("cube").unwrap()
         }).collect();
 
         let scene = Scene {
-            main: Arc::new(move |scene, dt, rta| {
+            main: Arc::new(move |scene, dt, rta, ga| {
                 let hamming_window = |n: usize, a: f32| a - (1.0 - a) * ((2.0 * PI * n as f32) / rta.fft.len() as f32).cos();
                 let normalization_factor = 1.0 / (rta.fft.len() as f32).sqrt();
                 let powers: Vec<f32> = rta.fft.iter().enumerate().map(|(i, v)| {
-                    (v * normalization_factor * hamming_window(i, 0.53836)).norm()
+                    v.norm() * hamming_window(i, 0.53836) * normalization_factor
                 }).collect();
                 let intensity = powers.iter().fold(0.0, |acc, p| acc + (p + 1.0).log10()) / powers.len() as f32;
                 let cubes_count = scene.models.len();
@@ -81,16 +81,25 @@ impl Synesthesia {
                 background_cube.set_position(vec3(0.0, -0.5, -4.0));
                 background_cube.reset_scaling();
                 background_cube.scale(vec3(1.5, 1.5, 1.5));
-                background_cube.scale(vec3(1.0 + intensity * 3.0, 1.0 + intensity * 3.0, 1.0 + intensity * 3.0));
+                if !intensity.is_nan() {
+                    background_cube.scale(vec3(1.0 + intensity * 3.0, 1.0 + intensity * 3.0, 1.0 + intensity * 3.0));
+                }
                 background_cube.set_color(vec3(1.0, 0.2, 0.0));
 
+                let progress_bar = cubes.next().unwrap();
+                let progress = rta.timestamp.as_secs_f32() / ga.duration.as_secs_f32();
+                progress_bar.set_position(vec3(-1.0 + progress - cube_width, 0.5 + 0.05, -0.5));
+                progress_bar.reset_scaling();
+                progress_bar.scale(vec3(progress, 0.05, 0.001));
+                progress_bar.set_color(vec3(0.0, 0.2, 1.0));
+
                 for (i, cube) in cubes.enumerate() {
-                    // Collect values in a gamma-corrected frequency range (using gamma = 2)
+                    // Collect values in a gamma-corrected frequency range (using gamma = 2.2)
                     let values: Vec<f32> = powers
                         .iter()
                         .enumerate()
                         .filter(|(fi, _)| {
-                            i == (((*fi as f32 / powers.len() as f32).sqrt()) * cubes_count as f32) as usize
+                            i == (((*fi as f32 / powers.len() as f32).powf(1.0/2.2)) * cubes_count as f32) as usize
                         })
                         .map(|(_, f)| *f)
                         .collect();
@@ -107,7 +116,7 @@ impl Synesthesia {
 
                     cube.set_position(vec3(-1.0 + (cube_width * 2.0 * i as f32), 0.5 - scale_value, -0.5));
                     cube.reset_scaling();
-                    cube.scale(vec3(cube_width, scale_value, cube_width));
+                    cube.scale(vec3(cube_width, scale_value, 0.0001));
                     cube.set_color(
                         vec3(
                         (scale_value * PI).sin() * 2.0,
@@ -140,6 +149,11 @@ impl Synesthesia {
                 match i.scancode {
                     87 => self.rendering_system.set_fullscreen(),
                     1 => *control_flow = ControlFlow::Exit,
+                    0x39 => if self.audio_player.paused() {
+                        self.audio_player.resume()
+                    } else {
+                        self.audio_player.pause()
+                    }
                     _ => ()
                 }
             },
@@ -150,7 +164,7 @@ impl Synesthesia {
                     let dt = last_frame.elapsed().as_secs_f32();
                     last_frame = Instant::now();
                     let main = s.main.clone();
-                    main(&mut s, dt, self.audio_player.get_realtime_attributes());
+                    main(&mut s, dt, self.audio_player.get_realtime_attributes(), self.audio_player.get_general_attributes());
 
                     // Then drawing it
                     self.rendering_system.start_render().unwrap();
@@ -180,7 +194,8 @@ struct Scene {
     pub main: Arc<dyn Fn(
         &mut Scene,
         f32,
-        RealtimeAttributes
+        RealtimeAttributes,
+        GeneralAttributes
     )>,
     pub models: Vec<Model>,
     pub ambient: AmbientLight,
